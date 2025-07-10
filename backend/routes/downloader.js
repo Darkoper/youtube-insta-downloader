@@ -17,33 +17,54 @@ router.post("/download", (req, res) => {
 
   const ytDlpPath = path.join(__dirname, "..", "yt-tool", "yt-dlp.exe");
 
+  // Initialize progress for this URL
+  currentProgress[url] = 0;
+
   // Set headers for browser download
   res.setHeader("Content-Disposition", `attachment; filename="video.mp4"`);
   res.setHeader("Content-Type", "video/mp4");
 
-  // Add `+bestaudio` for audio merge
   const ytProcess = spawn(ytDlpPath, [
     "-f",
-    `${format_id}+bestaudio`, // 🔥 auto merge
+    `${format_id}+bestaudio`,
+    "--newline", // Force newline after each progress line
     "-o",
-    "-", // stream to stdout
+    "-",
     url,
   ]);
 
   // Pipe directly to browser
   ytProcess.stdout.pipe(res);
 
+  // 🔥 CAPTURE PROGRESS FROM STDERR
   ytProcess.stderr.on("data", (data) => {
-    console.error(`yt-dlp stderr: ${data}`);
+    const output = data.toString();
+    console.log(`yt-dlp stderr: ${output}`); // Keep your existing log
+    
+    // Parse progress from yt-dlp output
+    const progressMatch = output.match(/(\d+(?:\.\d+)?)%\s+of/);
+    if (progressMatch) {
+      const progress = parseFloat(progressMatch[1]);
+      currentProgress[url] = progress;
+      console.log(`Progress updated for ${url}: ${progress}%`);
+    }
   });
 
   ytProcess.on("error", (err) => {
     console.error("yt-dlp error:", err);
+    delete currentProgress[url]; // Clean up
     res.status(500).json({ error: "Download error" });
   });
 
   ytProcess.on("close", (code) => {
     console.log(`yt-dlp exited with code ${code}`);
+    if (code === 0) {
+      currentProgress[url] = 100; // Mark as complete
+    }
+    // Clean up after a delay
+    setTimeout(() => {
+      delete currentProgress[url];
+    }, 5000);
   });
 });
 

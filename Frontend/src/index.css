@@ -1,8 +1,7 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
@@ -58,7 +57,7 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground font-sans;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   html {
@@ -70,19 +69,19 @@ All colors MUST be HSL.
   .glass {
     @apply bg-white/10 backdrop-blur-md border border-white/20;
   }
-  
+
   .glass-dark {
     @apply bg-black/20 backdrop-blur-md border border-white/10;
   }
-  
+
   .gradient-text {
     @apply bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent;
   }
-  
+
   .glow-purple {
     box-shadow: 0 0 20px rgba(147, 51, 234, 0.3);
   }
-  
+
   .glow-cyan {
     box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
   }

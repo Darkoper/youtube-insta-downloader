@@ -4,7 +4,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Youtube, Video, ArrowDown } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../components/ui/tabs";
 import { toast } from "../hooks/useToast";
 
 const VideoDownloader = () => {
@@ -19,7 +24,7 @@ const VideoDownloader = () => {
       toast({
         title: "URL Required",
         description: "Please paste a video URL to continue",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
@@ -29,7 +34,7 @@ const VideoDownloader = () => {
       const res = await fetch("http://localhost:5000/api/formats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url }),
       });
 
       const data = await res.json();
@@ -38,7 +43,7 @@ const VideoDownloader = () => {
       setVideoData({
         title: data.title,
         thumbnail: data.thumbnail,
-        formats: data.formats
+        formats: data.formats,
       });
 
       toast({
@@ -50,7 +55,7 @@ const VideoDownloader = () => {
       toast({
         title: "Error Fetching Formats",
         description: err.message || "Something went wrong",
-        variant: "destructive"
+        variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
@@ -58,41 +63,50 @@ const VideoDownloader = () => {
   };
 
   const handleFormatDownload = async (format_id) => {
-    const source = new EventSource(`http://localhost:5000/api/progress?url=${encodeURIComponent(url)}`);
+    setDownloadProgress(0);
+
+    const source = new EventSource(
+      `http://localhost:5000/api/progress?url=${encodeURIComponent(
+        url
+      )}&format_id=${format_id}`
+    );
+
     source.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setDownloadProgress(data.progress);
+      try {
+        const data = JSON.parse(event.data);
+        // console.log("Progress data:", data);
+
+        if (data.progress !== undefined) {
+          setDownloadProgress(Math.round(data.progress));
+        }
+
+        // Handle completion and download URL from backend
+        if (data.status === "completed" && data.downloadUrl) {
+          const a = document.createElement("a");
+          a.href = data.downloadUrl;
+          a.download = data.filename || "video.mp4";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          source.close();
+          setDownloadProgress(null);
+        }
+      } catch (error) {
+        console.error("Error parsing progress:", error);
+      }
     };
 
-    try {
-      const response = await fetch("http://localhost:5000/api/download", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url, format_id }),
-      });
-
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = "video.mp4";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(downloadUrl);
-    } catch (err) {
+    // Just trigger the download, don't wait for response
+    fetch("http://localhost:5000/api/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, format_id }),
+    }).catch((err) => {
       console.error("Download failed:", err);
-      toast({
-        title: "Download Failed",
-        description: err.message || "Something went wrong",
-        variant: "destructive",
-      });
-    } finally {
       source.close();
       setDownloadProgress(null);
-    }
+    });
   };
 
   return (
@@ -108,16 +122,38 @@ const VideoDownloader = () => {
           <div className="relative p-8 md:p-12 rounded-3xl bg-slate-900/40 backdrop-blur-xl border border-slate-700/50 shadow-2xl">
             <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-purple-500/10 to-cyan-500/10 backdrop-blur-xl"></div>
             <div className="relative z-10">
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <Tabs
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="w-full"
+              >
                 <TabsList className="grid w-full grid-cols-2 mb-8 bg-slate-800/50 border border-slate-600/30">
-                  <TabsTrigger value="youtube"> <Youtube className="w-5 h-5 mr-2" /> YouTube </TabsTrigger>
-                  <TabsTrigger value="instagram"> <Video className="w-5 h-5 mr-2" /> Instagram </TabsTrigger>
+                  <TabsTrigger value="youtube">
+                    {" "}
+                    <Youtube className="w-5 h-5 mr-2" /> YouTube{" "}
+                  </TabsTrigger>
+                  <TabsTrigger value="instagram">
+                    {" "}
+                    <Video className="w-5 h-5 mr-2" /> Instagram{" "}
+                  </TabsTrigger>
                 </TabsList>
                 <TabsContent value="youtube">
-                  <UrlInput url={url} setUrl={setUrl} onDownload={handleDownload} isProcessing={isProcessing} placeholder="https://youtube.com/watch?v=..." />
+                  <UrlInput
+                    url={url}
+                    setUrl={setUrl}
+                    onDownload={handleDownload}
+                    isProcessing={isProcessing}
+                    placeholder="https://youtube.com/watch?v=..."
+                  />
                 </TabsContent>
                 <TabsContent value="instagram">
-                  <UrlInput url={url} setUrl={setUrl} onDownload={handleDownload} isProcessing={isProcessing} placeholder="https://instagram.com/p/..." />
+                  <UrlInput
+                    url={url}
+                    setUrl={setUrl}
+                    onDownload={handleDownload}
+                    isProcessing={isProcessing}
+                    placeholder="https://instagram.com/p/..."
+                  />
                 </TabsContent>
               </Tabs>
 
@@ -130,7 +166,11 @@ const VideoDownloader = () => {
                     transition={{ duration: 0.5 }}
                     className="mt-8"
                   >
-                    <VideoPreviewCard videoData={videoData} onFormatDownload={handleFormatDownload} downloadProgress={downloadProgress} />
+                    <VideoPreviewCard
+                      videoData={videoData}
+                      onFormatDownload={handleFormatDownload}
+                      downloadProgress={downloadProgress}
+                    />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -158,7 +198,11 @@ const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder }) => (
         className="absolute right-2 top-2 h-10 px-6 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-xl"
       >
         {isProcessing ? (
-          <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full" />
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
+          />
         ) : (
           <ArrowDown className="w-5 h-5" />
         )}
@@ -167,18 +211,30 @@ const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder }) => (
   </div>
 );
 
-const VideoPreviewCard = ({ videoData, onFormatDownload, downloadProgress }) => (
+const VideoPreviewCard = ({
+  videoData,
+  onFormatDownload,
+  downloadProgress,
+}) => (
   <div className="p-6 rounded-2xl bg-slate-800/30 border border-slate-600/30">
     <div className="flex flex-col md:flex-row items-start gap-6">
       <div className="relative flex-shrink-0">
-        <img src={videoData.thumbnail} alt="Video thumbnail" className="w-32 h-24 md:w-48 md:h-36 object-cover rounded-xl" />
+        <img
+          src={videoData.thumbnail}
+          alt="Video thumbnail"
+          className="w-32 h-24 md:w-48 md:h-36 object-cover rounded-xl"
+        />
       </div>
 
       <div className="flex-1 space-y-4">
-        <h3 className="text-xl font-semibold text-white mb-2">{videoData.title}</h3>
+        <h3 className="text-xl font-semibold text-white mb-2">
+          {videoData.title}
+        </h3>
 
         {downloadProgress !== null && (
-          <div className="text-sm text-green-400">Downloading... {downloadProgress}%</div>
+          <div className="text-sm text-green-400">
+            Downloading... {downloadProgress}%
+          </div>
         )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -190,9 +246,13 @@ const VideoPreviewCard = ({ videoData, onFormatDownload, downloadProgress }) => 
               onClick={() => onFormatDownload(f.format_id)}
               className="p-3 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20"
             >
-              <div className="text-sm font-semibold text-white">{f.ext.toUpperCase()}</div>
+              <div className="text-sm font-semibold text-white">
+                {f.ext.toUpperCase()}
+              </div>
               <div className="text-xs text-slate-400">{f.quality}</div>
-              <div className="text-xs text-slate-500">{f.size || 'Unknown Size'}</div>
+              <div className="text-xs text-slate-500">
+                {f.size || "Unknown Size"}
+              </div>
             </motion.button>
           ))}
         </div>

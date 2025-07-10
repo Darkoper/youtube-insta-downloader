@@ -1,6 +1,6 @@
 import Hero from "../components/Hero";
 import VideoDownloader from "../components/VideoDownloader";
-import Features from "../components/Feture";
+import Features from "../components/Feature";
 import Footer from "../components/Footer";
 
 const Index = () => {
