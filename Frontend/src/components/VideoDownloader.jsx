@@ -12,80 +12,88 @@ const VideoDownloader = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [videoData, setVideoData] = useState(null);
   const [activeTab, setActiveTab] = useState("youtube");
+  const [downloadProgress, setDownloadProgress] = useState(null);
 
   const handleDownload = async () => {
-  if (!url.trim()) {
-    toast({
-      title: "URL Required",
-      description: "Please paste a video URL to continue",
-      variant: "destructive"
-    });
-    return;
-  }
+    if (!url.trim()) {
+      toast({
+        title: "URL Required",
+        description: "Please paste a video URL to continue",
+        variant: "destructive"
+      });
+      return;
+    }
 
-  try {
-    setIsProcessing(true);
-    const res = await fetch("http://localhost:5000/api/formats", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url })
-    });
+    try {
+      setIsProcessing(true);
+      const res = await fetch("http://localhost:5000/api/formats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
 
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
 
-    setVideoData({
-      title: data.title,
-      thumbnail: data.thumbnail,
-      formats: data.formats
-    });
+      setVideoData({
+        title: data.title,
+        thumbnail: data.thumbnail,
+        formats: data.formats
+      });
 
-    toast({
-      title: "Formats Loaded ✨",
-      description: "Choose a resolution to download",
-    });
-  } catch (err) {
-    console.error(err);
-    toast({
-      title: "Error Fetching Formats",
-      description: err.message || "Something went wrong",
-      variant: "destructive"
-    });
-  } finally {
-    setIsProcessing(false);
-  }
-};
+      toast({
+        title: "Formats Loaded ✨",
+        description: "Choose a resolution to download",
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Error Fetching Formats",
+        description: err.message || "Something went wrong",
+        variant: "destructive"
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
+  const handleFormatDownload = async (format_id) => {
+    const source = new EventSource(`http://localhost:5000/api/progress?url=${encodeURIComponent(url)}`);
+    source.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setDownloadProgress(data.progress);
+    };
 
-const handleFormatDownload = async (format_id) => {
-  try {
-    const response = await fetch("http://localhost:5000/api/download", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ url, format_id }),
-    });
+    try {
+      const response = await fetch("http://localhost:5000/api/download", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url, format_id }),
+      });
 
-    const blob = await response.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = downloadUrl;
-    a.download = "video.mp4";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(downloadUrl);
-  } catch (err) {
-    console.error("Download failed:", err);
-    toast({
-      title: "Download Failed",
-      description: err.message || "Something went wrong",
-      variant: "destructive",
-    });
-  }
-};
-
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = "video.mp4";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error("Download failed:", err);
+      toast({
+        title: "Download Failed",
+        description: err.message || "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      source.close();
+      setDownloadProgress(null);
+    }
+  };
 
   return (
     <section className="px-6 py-20">
@@ -122,7 +130,7 @@ const handleFormatDownload = async (format_id) => {
                     transition={{ duration: 0.5 }}
                     className="mt-8"
                   >
-                    <VideoPreviewCard videoData={videoData} onFormatDownload={handleFormatDownload} />
+                    <VideoPreviewCard videoData={videoData} onFormatDownload={handleFormatDownload} downloadProgress={downloadProgress} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -159,7 +167,7 @@ const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder }) => (
   </div>
 );
 
-const VideoPreviewCard = ({ videoData, onFormatDownload }) => (
+const VideoPreviewCard = ({ videoData, onFormatDownload, downloadProgress }) => (
   <div className="p-6 rounded-2xl bg-slate-800/30 border border-slate-600/30">
     <div className="flex flex-col md:flex-row items-start gap-6">
       <div className="relative flex-shrink-0">
@@ -168,10 +176,13 @@ const VideoPreviewCard = ({ videoData, onFormatDownload }) => (
 
       <div className="flex-1 space-y-4">
         <h3 className="text-xl font-semibold text-white mb-2">{videoData.title}</h3>
+
+        {downloadProgress !== null && (
+          <div className="text-sm text-green-400">Downloading... {downloadProgress}%</div>
+        )}
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          
           {videoData.formats?.map((f, i) => (
-            
             <motion.button
               key={i}
               whileHover={{ scale: 1.05 }}
@@ -179,7 +190,6 @@ const VideoPreviewCard = ({ videoData, onFormatDownload }) => (
               onClick={() => onFormatDownload(f.format_id)}
               className="p-3 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20"
             >
-              {console.log("format.id", f.format_id)}
               <div className="text-sm font-semibold text-white">{f.ext.toUpperCase()}</div>
               <div className="text-xs text-slate-400">{f.quality}</div>
               <div className="text-xs text-slate-500">{f.size || 'Unknown Size'}</div>
