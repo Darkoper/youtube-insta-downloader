@@ -6,11 +6,14 @@ import { Input } from "../components/ui/input";
 import {
   YoutubeIcon,
   Video,
-  ArrowDown,
+  ArrowRight,
   ChevronDown,
   Download,
   Monitor,
   Film,
+  Star,
+  Music,
+  Headphones,
 } from "lucide-react";
 import {
   Tabs,
@@ -212,7 +215,7 @@ const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder }) => (
             className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
           />
         ) : (
-          <ArrowDown className="w-5 h-5" />
+          <ArrowRight className="w-5 h-5" />
         )}
       </Button>
     </div>
@@ -225,6 +228,7 @@ const VideoPreviewCard = ({
   downloadProgress,
 }) => {
   const [openDropdown, setOpenDropdown] = useState(null);
+  const [mediaType, setMediaType] = useState("video"); // "video" or "audio"
 
   // Function to organize formats by resolution
   const organizeFormats = (formats) => {
@@ -261,11 +265,59 @@ const VideoPreviewCard = ({
     return grouped;
   };
 
+  // Function to get audio formats
+  const getAudioFormats = (formats) => {
+    if (!formats) return [];
+
+    // Filter for audio formats and remove unknowns
+    const audioFormats = formats.filter(
+      (f) =>
+        (f.ext === "mp3" ||
+          f.ext === "m4a" ||
+          f.ext === "webm" ||
+          f.acodec !== "none") &&
+        f.abr && // Must have audio bitrate
+        f.abr !== "Unknown" &&
+        f.size &&
+        f.size !== "Unknown Size"
+    );
+
+    // Remove duplicates based on bitrate and extension
+    const uniqueAudioFormats = audioFormats.reduce((acc, current) => {
+      const key = `${current.abr}-${current.ext}`;
+      if (!acc.find((item) => `${item.abr}-${item.ext}` === key)) {
+        acc.push(current);
+      }
+      return acc;
+    }, []);
+
+    // Group by bitrate
+    const groupedAudio = {};
+    uniqueAudioFormats.forEach((format) => {
+      // Determine bitrate category
+      let bitrate = "128kbps"; // default
+
+      if (format.abr >= 300) bitrate = "320kbps";
+      else if (format.abr >= 240) bitrate = "256kbps";
+      else if (format.abr >= 180) bitrate = "192kbps";
+      else bitrate = "128kbps";
+
+      if (!groupedAudio[bitrate]) {
+        groupedAudio[bitrate] = [];
+      }
+      groupedAudio[bitrate].push(format);
+    });
+
+    return groupedAudio;
+  };
+
   const groupedFormats = organizeFormats(videoData.formats);
+  const audioFormats = getAudioFormats(videoData.formats);
 
   // Define resolution categories
   const resolutionCategories = {
-    "4K": ["2160p", "4320p60", "2160p60"],
+    "8K": ["4320p60"],
+    "4K": ["2160p", "2160p60"],
     HD: ["1440p", "1440p60", "1080p", "1080p60"],
     "720p": ["720p", "720p60"],
     "480p": ["480p"],
@@ -303,6 +355,194 @@ const VideoPreviewCard = ({
     return size;
   };
 
+  const renderVideoContent = () => (
+    <div className="space-y-3">
+      <h4 className="text-sm font-medium text-slate-300 mb-3">
+        Choose Video Quality:
+      </h4>
+
+      {Object.entries(resolutionCategories).map(([category, resolutions]) => {
+        const categoryFormats = getFormatsForCategory(category);
+
+        if (categoryFormats.length === 0) return null;
+
+        return (
+          <div key={category}>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => toggleDropdown(category)}
+              className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                {category === "8K" && (
+                  <Star className="w-5 h-5 text-amber-400" />
+                )}
+                {category === "4K" && (
+                  <Film className="w-5 h-5 text-purple-400" />
+                )}
+                {category === "HD" && (
+                  <Monitor className="w-5 h-5 text-cyan-400" />
+                )}
+                {!["8K", "4K", "HD"].includes(category) && (
+                  <Video className="w-5 h-5 text-slate-400" />
+                )}
+
+                <span className="text-white font-medium">{category}</span>
+                <span className="text-slate-400 text-sm">
+                  ({categoryFormats.length} option
+                  {categoryFormats.length > 1 ? "s" : ""})
+                </span>
+              </div>
+
+              <motion.div
+                animate={{ rotate: openDropdown === category ? 180 : 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              </motion.div>
+            </motion.button>
+
+            <AnimatePresence>
+              {openDropdown === category && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {categoryFormats.map((format, index) => (
+                        <motion.button
+                          key={`${format.format_id}-${index}`}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => onFormatDownload(format.format_id)}
+                          className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <Download className="w-4 h-4 text-slate-400" />
+                            <span className="text-sm font-semibold text-white">
+                              {format.ext.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-400">
+                            {format.quality}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {getFileSizeInMB(format.size)}
+                          </div>
+                        </motion.button>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderAudioContent = () => (
+    <div className="space-y-3">
+      <h4 className="text-sm font-medium text-slate-300 mb-3">
+        Choose Audio Quality:
+      </h4>
+
+      {Object.entries(audioFormats).map(([bitrate, formats]) => {
+        if (formats.length === 0) return null;
+
+        return (
+          <div key={bitrate}>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => toggleDropdown(bitrate)}
+              className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                {bitrate === "320kbps" && (
+                  <Star className="w-5 h-5 text-amber-400" />
+                )}
+                {bitrate === "256kbps" && (
+                  <Headphones className="w-5 h-5 text-purple-400" />
+                )}
+                {bitrate === "192kbps" && (
+                  <Music className="w-5 h-5 text-cyan-400" />
+                )}
+                {bitrate === "128kbps" && (
+                  <Music className="w-5 h-5 text-slate-400" />
+                )}
+
+                <span className="text-white font-medium">{bitrate}</span>
+                <span className="text-slate-400 text-sm">
+                  ({formats.length} option{formats.length > 1 ? "s" : ""})
+                </span>
+              </div>
+
+              <motion.div
+                animate={{ rotate: openDropdown === bitrate ? 180 : 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              </motion.div>
+            </motion.button>
+
+            <AnimatePresence>
+              {openDropdown === bitrate && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {formats.map((format, index) => (
+                        <motion.button
+                          key={`${format.format_id}-${index}`}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => onFormatDownload(format.format_id)}
+                          className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <Download className="w-4 h-4 text-slate-400" />
+                            <span className="text-sm font-semibold text-white">
+                              {format.ext.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-400">
+                            {format.abr ? `${format.abr}kbps` : bitrate}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {getFileSizeInMB(format.size)}
+                          </div>
+                        </motion.button>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })}
+
+      {Object.keys(audioFormats).length === 0 && (
+        <div className="text-center py-8 text-slate-400">
+          <Music className="w-12 h-12 mx-auto mb-2 opacity-50" />
+          <p>No audio formats available for this video</p>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="p-6 rounded-2xl bg-slate-800/30 border border-slate-600/30">
       {/* Video Info Row */}
@@ -312,7 +552,7 @@ const VideoPreviewCard = ({
           <img
             src={videoData.thumbnail}
             alt="Video thumbnail"
-            className="w-40 h-30 object-contain rounded-sm border   border-slate-600/30"
+            className="w-40 h-30 object-contain rounded-sm border border-slate-600/30"
           />
         </div>
 
@@ -340,91 +580,23 @@ const VideoPreviewCard = ({
         </div>
       </div>
 
-      {/* Download Options */}
-      <div className="space-y-3">
-        <h4 className="text-sm font-medium text-slate-300 mb-3">
-          Choose Quality:
-        </h4>
+      {/* Audio/Video Tabs */}
+      <Tabs value={mediaType} onValueChange={setMediaType} className="w-full">
+        <TabsList className="grid w-full grid-cols-2 mb-6 bg-slate-800/50 border border-slate-600/30">
+          <TabsTrigger value="video">
+            <Video className="w-5 h-5 mr-2" />
+            Video
+          </TabsTrigger>
+          <TabsTrigger value="audio">
+            <Music className="w-5 h-5 mr-2" />
+            Audio
+          </TabsTrigger>
+        </TabsList>
 
-        {Object.entries(resolutionCategories).map(([category, resolutions]) => {
-          const categoryFormats = getFormatsForCategory(category);
+        <TabsContent value="video">{renderVideoContent()}</TabsContent>
 
-          if (categoryFormats.length === 0) return null;
-
-          return (
-            <div key={category} className="relative">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => toggleDropdown(category)}
-                className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  {category === "4K" && (
-                    <Film className="w-5 h-5 text-purple-400" />
-                  )}
-                  {category === "HD" && (
-                    <Monitor className="w-5 h-5 text-cyan-400" />
-                  )}
-                  {!["4K", "HD"].includes(category) && (
-                    <Video className="w-5 h-5 text-slate-400" />
-                  )}
-
-                  <span className="text-white font-medium">{category}</span>
-                  <span className="text-slate-400 text-sm">
-                    ({categoryFormats.length} option
-                    {categoryFormats.length > 1 ? "s" : ""})
-                  </span>
-                </div>
-
-                <motion.div
-                  animate={{ rotate: openDropdown === category ? 180 : 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <ChevronDown className="w-5 h-5 text-slate-400" />
-                </motion.div>
-              </motion.button>
-
-              <AnimatePresence>
-                {openDropdown === category && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                    transition={{ duration: 0.2 }}
-                    className="absolute top-full left-0 right-0 mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl z-10"
-                  >
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {categoryFormats.map((format, index) => (
-                        <motion.button
-                          key={`${format.format_id}-${index}`}
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => onFormatDownload(format.format_id)}
-                          className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <Download className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm font-semibold text-white">
-                              {format.ext.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-400">
-                            {format.quality}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            {getFileSizeInMB(format.size)}
-                          </div>
-                        </motion.button>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          );
-        })}
-      </div>
+        <TabsContent value="audio">{renderAudioContent()}</TabsContent>
+      </Tabs>
     </div>
   );
 };
