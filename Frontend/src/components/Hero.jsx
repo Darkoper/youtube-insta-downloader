@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Video, Download, Zap } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const Hero = () => {
   return (
@@ -48,7 +49,7 @@ const Hero = () => {
           transition={{ delay: 0.6, duration: 0.8 }}
           className="text-xl md:text-2xl text-slate-300 mb-12 max-w-2xl mx-auto leading-relaxed"
         >
-          Ultra-fast, premium video downloader for YouTube and Instagram. 
+          Ultra-fast, premium video downloader for YouTube and Instagram.
           <span className="text-purple-400"> No limits. No hassle.</span>
         </motion.p>
 
@@ -60,26 +61,33 @@ const Hero = () => {
           className="flex flex-col sm:flex-row items-center justify-center gap-4"
         >
           <motion.button
-            whileHover={{ scale: 1.05, boxShadow: "0 20px 40px rgba(147, 51, 234, 0.3)" }}
+            whileHover={{
+              scale: 1.05,
+              boxShadow: "0 20px 40px rgba(147, 51, 234, 0.3)",
+            }}
             whileTap={{ scale: 0.95 }}
             className="group relative px-8 py-4 bg-gradient-to-r from-purple-600 to-purple-500 rounded-2xl font-semibold text-white overflow-hidden transition-all duration-300"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <span className="relative flex items-center space-x-2">
-              <Download className="w-5 h-5" />
-              <span>Start Downloading</span>
-            </span>
+            <Link to="/downloading">
+              <span className="relative flex items-center space-x-2">
+                <Download className="w-5 h-5" />
+                <span>Start Downloading</span>
+              </span>
+            </Link>
           </motion.button>
-          
+
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="px-8 py-4 bg-slate-800/50 backdrop-blur-sm border border-slate-600/50 rounded-2xl font-semibold text-slate-200 hover:bg-slate-700/50 transition-all duration-300"
           >
-            <span className="flex items-center space-x-2">
-              <Zap className="w-5 h-5" />
-              <span>View Features</span>
-            </span>
+            <Link to="/features">
+              <span className="flex items-center space-x-2">
+                <Zap className="w-5 h-5" />
+                <span>View Features</span>
+              </span>
+            </Link>
           </motion.button>
         </motion.div>
 
@@ -93,7 +101,7 @@ const Hero = () => {
           {[
             { label: "Downloads", value: "1M+" },
             { label: "Users", value: "50K+" },
-            { label: "Formats", value: "10+" }
+            { label: "Formats", value: "10+" },
           ].map((stat, index) => (
             <div key={index} className="text-center">
               <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
