@@ -9,104 +9,123 @@ let currentProgress = {}; // 🔁 Store progress keyed by video URL
 
 // 🚀 Download Route
 router.post("/download", (req, res) => {
-  const { url, format_id } = req.body;
+  const { url, format_id, ext } = req.body;
 
   if (!url || !format_id) {
     return res.status(400).json({ error: "URL and format_id are required" });
   }
 
   const ytDlpPath = path.join(__dirname, "..", "yt-tool", "yt-dlp.exe");
+  const outputPath = path.join(__dirname, "..", "downloads", `video.${ext || "mp4"}`);
 
-  // Initialize progress for this URL
-  currentProgress[url] = 0;
+  // yt-dlp command
+  // force merging with best audio if video-only format selected
+  const cmd = `"${ytDlpPath}" -f "${format_id}+bestaudio" --merge-output-format mp4 -o "${outputPath}" "${url}"`;
 
-  // Set headers for browser download
-  res.setHeader("Content-Disposition", `attachment; filename="video.mp4"`);
-  res.setHeader("Content-Type", "video/mp4");
 
-  const ytProcess = spawn(ytDlpPath, [
-    "-f",
-    `${format_id}+bestaudio`,
-    "--newline", // Force newline after each progress line
-    "-o",
-    "-",
-    url,
-  ]);
-
-  // Pipe directly to browser
-  ytProcess.stdout.pipe(res);
-
-  // 🔥 CAPTURE PROGRESS FROM STDERR
-  ytProcess.stderr.on("data", (data) => {
-    const output = data.toString();
-    console.log(`yt-dlp stderr: ${output}`); // Keep your existing log
-    
-    // Parse progress from yt-dlp output
-    const progressMatch = output.match(/(\d+(?:\.\d+)?)%\s+of/);
-    if (progressMatch) {
-      const progress = parseFloat(progressMatch[1]);
-      currentProgress[url] = progress;
-      console.log(`Progress updated for ${url}: ${progress}%`);
+  exec(cmd, (err, stdout, stderr) => {
+    if (err) {
+      console.error("yt-dlp error:", stderr || err.message);
+      return res.status(500).json({ error: "Download failed" });
     }
-  });
 
-  ytProcess.on("error", (err) => {
-    console.error("yt-dlp error:", err);
-    delete currentProgress[url]; // Clean up
-    res.status(500).json({ error: "Download error" });
-  });
+    // Stream the file as download
+    res.download(outputPath, `video.${ext || "mp4"}`, (downloadErr) => {
+      if (downloadErr) {
+        console.error("Download response error:", downloadErr);
+      }
 
-  ytProcess.on("close", (code) => {
-    console.log(`yt-dlp exited with code ${code}`);
-    if (code === 0) {
-      currentProgress[url] = 100; // Mark as complete
-    }
-    // Clean up after a delay
-    setTimeout(() => {
-      delete currentProgress[url];
-    }, 5000);
+      // Clean up file after sending
+      fs.unlink(outputPath, (unlinkErr) => {
+        if (unlinkErr) console.error("Failed to delete file:", unlinkErr);
+      });
+    });
   });
 });
-
 
 // 📦 Fetch Available Formats
 router.post("/formats", (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL is required" });
 
-  const ytDlpPath = `"${path.join(__dirname, "..", "yt-tool", "yt-dlp.exe")}"`;
-  const cmd = `${ytDlpPath} -J --no-warnings "${url}"`;
+  const ytDlpPath = path.join(__dirname, "..", "yt-tool", "yt-dlp.exe");
+  const cmd = `"${ytDlpPath}" -J --no-warnings "${url}"`;
 
   exec(cmd, (err, stdout, stderr) => {
     if (err) {
-      console.error("❌ yt-dlp error:", stderr || err.message);
+      console.error("yt-dlp error:", stderr || err.message);
       return res.status(500).json({ error: "Failed to fetch formats" });
     }
 
     try {
       const info = JSON.parse(stdout);
-      const formats = info.formats
-        .filter((f) => f.ext === "mp4" && f.url)
-        .map((f) => ({
-          format_id: f.format_id,
-          quality: f.format_note || `${f.height}p`,
-          ext: f.ext,
-          url: f.url,
-          size: f.filesize
-            ? `${(f.filesize / 1024 / 1024).toFixed(2)} MB`
-            : null,
-        }));
 
-      res.json({
-        title: info.title,
-        thumbnail: info.thumbnail,
-        formats,
-      });
+      // ✅ Filter out only usable formats (video/audio with URLs)
+      const formats = (info.formats || [])
+      .filter(f =>
+        f.url &&
+        (f.vcodec !== "none" || f.acodec !== "none") &&
+        f.protocol !== "mhtml"
+      ).map(f => ({
+        format_id: f.format_id,
+        ext: f.ext,
+        quality: f.format_note || f.resolution || `${f.width || "?"}x${f.height || "?"}`,
+        hasVideo: f.vcodec !== "none",
+        hasAudio: f.acodec !== "none",
+        size: f.filesize ? `${(f.filesize / (1024 * 1024)).toFixed(1)} MB` : "Unknown Size",
+        fps: f.fps || null
+      }));
+
+      res.json({ title: info.title, formats });
     } catch (parseErr) {
-      console.error("❌ JSON parse error:", parseErr.message);
-      return res.status(500).json({ error: "Invalid format data received" });
+      console.error("JSON parse error:", parseErr.message);
+      res.status(500).json({ error: "Failed to parse yt-dlp output" });
     }
   });
+});
+
+
+
+
+
+
+
+
+// Serve downloaded files
+router.get("/file/:filename", (req, res) => {
+  const filename = req.params.filename;
+  const filePath = path.join(__dirname, "..", "downloads", filename);
+  
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found" });
+  }
+
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Type", "video/mp4");
+
+  const stream = fs.createReadStream(filePath);
+  
+  stream.on("error", (err) => {
+    console.error("Error streaming file:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Error streaming file" });
+    }
+  });
+
+  stream.on("end", () => {
+    // Delete the file after successful download
+    setTimeout(() => {
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.error("Error deleting file:", err);
+        } else {
+          console.log("File deleted successfully:", filename);
+        }
+      });
+    }, 1000);
+  });
+
+  stream.pipe(res);
 });
 
 // 📡 SSE Progress Route
@@ -118,9 +137,16 @@ router.get("/progress", (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
+  let sentComplete = false;
   const interval = setInterval(() => {
     const progress = currentProgress[url] || 0;
-    res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+    // If download is complete, send status and dummy downloadUrl
+    if (progress === 100 && !sentComplete) {
+      res.write(`data: ${JSON.stringify({ progress, status: "completed", downloadUrl: null, filename: "video.mp4" })}\n\n`);
+      sentComplete = true;
+    } else {
+      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+    }
   }, 500);
 
   req.on("close", () => clearInterval(interval));

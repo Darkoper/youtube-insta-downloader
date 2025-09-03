@@ -1,5 +1,5 @@
 // VideoDownloader.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -14,6 +14,7 @@ import {
   Star,
   Music,
   Headphones,
+  AlertCircle,
 } from "lucide-react";
 import {
   Tabs,
@@ -23,12 +24,48 @@ import {
 } from "../components/ui/tabs";
 import { toast } from "../hooks/useToast";
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+
 const VideoDownloader = () => {
   const [url, setUrl] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [videoData, setVideoData] = useState(null);
-  const [activeTab, setActiveTab] = useState("YoutubeIcon");
+  const [activeTab, setActiveTab] = useState("youtube");
   const [downloadProgress, setDownloadProgress] = useState(null);
+  const [currentDownloadId, setCurrentDownloadId] = useState(null);
+
+  // Cleanup effect for EventSource
+  useEffect(() => {
+    return () => {
+      // Cleanup any active EventSource connections
+      if (window.currentEventSource) {
+        window.currentEventSource.close();
+        window.currentEventSource = null;
+      }
+    };
+  }, []);
+
+  // Validate URL function
+  const isValidUrl = (urlString) => {
+    try {
+      const url = new URL(urlString);
+      // Check for common video platforms
+      const validDomains = [
+        'youtube.com', 'youtu.be', 'www.youtube.com',
+        'instagram.com', 'www.instagram.com',
+        'tiktok.com', 'www.tiktok.com',
+        'facebook.com', 'www.facebook.com',
+        'twitter.com', 'www.twitter.com', 'x.com',
+        'vimeo.com', 'www.vimeo.com'
+      ];
+      
+      return validDomains.some(domain => 
+        url.hostname === domain || url.hostname.includes(domain)
+      );
+    } catch (error) {
+      return false;
+    }
+  };
 
   const handleDownload = async () => {
     if (!url.trim()) {
@@ -40,20 +77,51 @@ const VideoDownloader = () => {
       return;
     }
 
+    if (!isValidUrl(url.trim())) {
+      toast({
+        title: "Invalid URL",
+        description: "Please enter a valid video URL from supported platforms",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsProcessing(true);
-      const res = await fetch("http://localhost:5000/api/formats", {
+      setVideoData(null); // Reset previous data
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+
+      const res = await fetch(`${BACKEND_URL}/api/formats`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: url.trim() }),
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+        throw new Error(errorData.error || `Server error: ${res.status}`);
+      }
+
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      if (!data.formats || !Array.isArray(data.formats) || data.formats.length === 0) {
+        throw new Error("No downloadable formats found for this video");
+      }
 
       setVideoData({
-        title: data.title,
-        thumbnail: data.thumbnail,
+        title: data.title || "Unknown Title",
+        thumbnail: data.thumbnail || null,
+        duration: data.duration || null,
+        uploader: data.uploader || null,
         formats: data.formats,
       });
 
@@ -61,63 +129,116 @@ const VideoDownloader = () => {
         title: "Formats Loaded ✨",
         description: "Choose a resolution to download",
       });
+
     } catch (err) {
-      console.error(err);
+      console.error("Format fetch error:", err);
+      
+      let errorMessage = "Something went wrong";
+      if (err.name === 'AbortError') {
+        errorMessage = "Request timed out - please try again";
+      } else if (err.message.includes('fetch')) {
+        errorMessage = "Unable to connect to server";
+      } else {
+        errorMessage = err.message || "Failed to fetch video information";
+      }
+
       toast({
         title: "Error Fetching Formats",
-        description: err.message || "Something went wrong",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
     }
   };
+  
+ 
 
-  const handleFormatDownload = async (format_id) => {
+const handleFormatDownload = async (format) => {
+   console.log("Sending download request:", {
+  url: url,   // 👈 tumhara input url state
+  format_id: format.format_id,
+  ext: format.ext,
+});
+  try {
+    // Set up progress tracking
+    setCurrentDownloadId(format.format_id);
     setDownloadProgress(0);
-
-    const source = new EventSource(
-      `http://localhost:5000/api/progress?url=${encodeURIComponent(
-        url
-      )}&format_id=${format_id}`
-    );
-
-    source.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        // console.log("Progress data:", data);
-
-        if (data.progress !== undefined) {
-          setDownloadProgress(Math.round(data.progress));
-        }
-
-        // Handle completion and download URL from backend
-        if (data.status === "completed" && data.downloadUrl) {
-          const a = document.createElement("a");
-          a.href = data.downloadUrl;
-          a.download = data.filename || "video.mp4";
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-
-          source.close();
-          setDownloadProgress(null);
-        }
-      } catch (error) {
-        console.error("Error parsing progress:", error);
+    
+    // Set up EventSource for progress updates
+    const eventSource = new EventSource(`${BACKEND_URL}/api/progress?url=${encodeURIComponent(url)}`);
+    window.currentEventSource = eventSource;
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setDownloadProgress(data.progress);
+      
+      if (data.progress === 100 || data.status === "completed") {
+        eventSource.close();
+        window.currentEventSource = null;
       }
     };
+    
+    eventSource.onerror = () => {
+      eventSource.close();
+      window.currentEventSource = null;
+    };
 
-    // Just trigger the download, don't wait for response
-    fetch("http://localhost:5000/api/download", {
+    const res = await fetch(`${BACKEND_URL}/api/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, format_id }),
-    }).catch((err) => {
-      console.error("Download failed:", err);
-      source.close();
-      setDownloadProgress(null);
+      body: JSON.stringify({
+        url: url,
+        format_id: format.format_id,
+        ext: format.ext,
+      }),
     });
+
+    if (!res.ok) {
+      throw new Error("Download failed");
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = `video.${format.ext || "mp4"}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    window.URL.revokeObjectURL(downloadUrl);
+    
+    // Reset progress after successful download
+    setTimeout(() => {
+      setDownloadProgress(null);
+      setCurrentDownloadId(null);
+    }, 2000);
+    
+  } catch (err) {
+    console.error("Download failed:", err);
+    setDownloadProgress(null);
+    setCurrentDownloadId(null);
+    alert("Download failed!");
+  }
+};
+
+
+
+
+  // Reset function
+  const resetDownloader = () => {
+    setUrl("");
+    setVideoData(null);
+    setDownloadProgress(null);
+    setCurrentDownloadId(null);
+    setIsProcessing(false);
+    
+    if (window.currentEventSource) {
+      window.currentEventSource.close();
+      window.currentEventSource = null;
+    }
   };
 
   return (
@@ -139,22 +260,21 @@ const VideoDownloader = () => {
                 className="w-full"
               >
                 <TabsList className="grid w-full grid-cols-2 mb-8 bg-slate-800/50 border border-slate-600/30">
-                  <TabsTrigger value="YoutubeIcon">
-                    {" "}
-                    <YoutubeIcon className="w-5 h-5 mr-2" /> Youtube{" "}
+                  <TabsTrigger value="youtube">
+                    <YoutubeIcon className="w-5 h-5 mr-2" /> YouTube
                   </TabsTrigger>
                   <TabsTrigger value="instagram">
-                    {" "}
-                    <Video className="w-5 h-5 mr-2" /> Instagram{" "}
+                    <Video className="w-5 h-5 mr-2" /> Instagram
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="YoutubeIcon">
+                <TabsContent value="youtube">
                   <UrlInput
                     url={url}
                     setUrl={setUrl}
                     onDownload={handleDownload}
                     isProcessing={isProcessing}
-                    placeholder="https://YoutubeIcon.com/watch?v=..."
+                    placeholder="https://youtube.com/watch?v=... or https://youtu.be/..."
+                    onReset={resetDownloader}
                   />
                 </TabsContent>
                 <TabsContent value="instagram">
@@ -163,7 +283,8 @@ const VideoDownloader = () => {
                     setUrl={setUrl}
                     onDownload={handleDownload}
                     isProcessing={isProcessing}
-                    placeholder="https://instagram.com/p/..."
+                    placeholder="https://instagram.com/p/... or https://instagram.com/reel/..."
+                    onReset={resetDownloader}
                   />
                 </TabsContent>
               </Tabs>
@@ -181,6 +302,8 @@ const VideoDownloader = () => {
                       videoData={videoData}
                       onFormatDownload={handleFormatDownload}
                       downloadProgress={downloadProgress}
+                      isProcessing={isProcessing}
+                      onReset={resetDownloader}
                     />
                   </motion.div>
                 )}
@@ -193,7 +316,7 @@ const VideoDownloader = () => {
   );
 };
 
-const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder }) => (
+const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder, onReset }) => (
   <div className="space-y-4">
     <div className="relative">
       <Input
@@ -201,23 +324,38 @@ const UrlInput = ({ url, setUrl, onDownload, isProcessing, placeholder }) => (
         placeholder={placeholder}
         value={url}
         onChange={(e) => setUrl(e.target.value)}
-        className="h-14 pl-4 pr-32 text-lg bg-slate-800/50 border-slate-600/50 rounded-2xl"
-      />
-      <Button
-        onClick={onDownload}
+        onKeyPress={(e) => e.key === 'Enter' && !isProcessing && onDownload()}
+        className="h-14 pl-4 pr-32 text-lg bg-slate-800/50 border-slate-600/50 rounded-2xl placeholder:text-slate-400"
         disabled={isProcessing}
-        className="absolute right-2 top-2 h-10 px-6 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-xl"
-      >
-        {isProcessing ? (
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-            className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
-          />
-        ) : (
-          <ArrowRight className="w-5 h-5" />
+      />
+      <div className="absolute right-2 top-2 flex gap-2">
+        {url && (
+          <Button
+            onClick={onReset}
+            disabled={isProcessing}
+            variant="ghost"
+            size="sm"
+            className="h-10 px-4 text-slate-400 hover:text-white"
+          >
+            Clear
+          </Button>
         )}
-      </Button>
+        <Button
+          onClick={onDownload}
+          disabled={isProcessing || !url.trim()}
+          className="h-10 px-6 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-xl disabled:opacity-50"
+        >
+          {isProcessing ? (
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
+            />
+          ) : (
+            <ArrowRight className="w-5 h-5" />
+          )}
+        </Button>
+      </div>
     </div>
   </div>
 );
@@ -226,27 +364,32 @@ const VideoPreviewCard = ({
   videoData,
   onFormatDownload,
   downloadProgress,
+  isProcessing,
+  onReset,
 }) => {
   const [openDropdown, setOpenDropdown] = useState(null);
-  const [mediaType, setMediaType] = useState("video"); // "video" or "audio"
+  const [mediaType, setMediaType] = useState("video");
 
   // Function to organize formats by resolution
   const organizeFormats = (formats) => {
-    if (!formats) return {};
+    if (!formats || !Array.isArray(formats)) return {};
 
-    // Filter out formats with unknown size and duplicates
+    // Filter out invalid formats
     const validFormats = formats.filter(
       (f) =>
-        f.size &&
-        f.size !== "Unknown Size" &&
+        f &&
+        f.format_id &&
         f.quality &&
-        f.quality !== "Unknown"
+        f.ext &&
+        f.quality !== "Unknown" &&
+        f.hasVideo !== undefined
     );
 
-    // Remove duplicates based on quality and size
+    // Remove duplicates based on quality and extension
     const uniqueFormats = validFormats.reduce((acc, current) => {
-      const key = `${current.quality}-${current.size}`;
-      if (!acc.find((item) => `${item.quality}-${item.size}` === key)) {
+      const key = `${current.quality}-${current.ext}`;
+      const existing = acc.find((item) => `${item.quality}-${item.ext}` === key);
+      if (!existing) {
         acc.push(current);
       }
       return acc;
@@ -267,45 +410,45 @@ const VideoPreviewCard = ({
 
   // Function to get audio formats
   const getAudioFormats = (formats) => {
-    if (!formats) return [];
+    if (!formats || !Array.isArray(formats)) return {};
 
-    // Filter for audio formats and remove unknowns
+    // Filter for audio-only formats
     const audioFormats = formats.filter(
       (f) =>
+        f &&
+        f.format_id &&
+        f.hasAudio &&
+        (!f.hasVideo || f.vcodec === "none") &&
+        f.ext &&
         (f.ext === "mp3" ||
           f.ext === "m4a" ||
           f.ext === "webm" ||
-          f.acodec !== "none") &&
-        f.abr && // Must have audio bitrate
-        f.abr !== "Unknown" &&
-        f.size &&
-        f.size !== "Unknown Size"
+          f.ext === "opus" ||
+          f.acodec !== "none")
     );
 
-    // Remove duplicates based on bitrate and extension
-    const uniqueAudioFormats = audioFormats.reduce((acc, current) => {
-      const key = `${current.abr}-${current.ext}`;
-      if (!acc.find((item) => `${item.abr}-${item.ext}` === key)) {
-        acc.push(current);
-      }
-      return acc;
-    }, []);
-
-    // Group by bitrate
+    // Group by approximate bitrate/quality
     const groupedAudio = {};
-    uniqueAudioFormats.forEach((format) => {
-      // Determine bitrate category
-      let bitrate = "128kbps"; // default
-
-      if (format.abr >= 300) bitrate = "320kbps";
-      else if (format.abr >= 240) bitrate = "256kbps";
-      else if (format.abr >= 180) bitrate = "192kbps";
-      else bitrate = "128kbps";
-
-      if (!groupedAudio[bitrate]) {
-        groupedAudio[bitrate] = [];
+    audioFormats.forEach((format) => {
+      // Determine quality category based on format info
+      let quality = "Standard";
+      
+      if (format.quality && format.quality.includes("medium")) {
+        quality = "Medium (128kbps)";
+      } else if (format.quality && format.quality.includes("high")) {
+        quality = "High (192kbps)";
+      } else if (format.quality && format.quality.includes("very_high")) {
+        quality = "Very High (256kbps)";
+      } else if (format.fps || format.quality === "tiny") {
+        quality = "Low (96kbps)";
+      } else {
+        quality = "Standard (128kbps)";
       }
-      groupedAudio[bitrate].push(format);
+
+      if (!groupedAudio[quality]) {
+        groupedAudio[quality] = [];
+      }
+      groupedAudio[quality].push(format);
     });
 
     return groupedAudio;
@@ -314,246 +457,255 @@ const VideoPreviewCard = ({
   const groupedFormats = organizeFormats(videoData.formats);
   const audioFormats = getAudioFormats(videoData.formats);
 
-  // Define resolution categories
-  const resolutionCategories = {
-    "8K": ["4320p60"],
-    "4K": ["2160p", "2160p60"],
-    HD: ["1440p", "1440p60", "1080p", "1080p60"],
-    "720p": ["720p", "720p60"],
-    "480p": ["480p"],
-    "360p": ["360p"],
-    "144p": ["144p"],
-  };
+  // Define resolution categories for better organization
+  const resolutionOrder = [
+    "2160p", "2160p60", "1440p", "1440p60", "1080p", "1080p60",
+    "720p", "720p60", "480p", "360p", "240p", "144p"
+  ];
 
-  const getFormatsForCategory = (category) => {
-    const resolutions = resolutionCategories[category];
-    const formats = [];
-
-    resolutions.forEach((res) => {
-      if (groupedFormats[res]) {
-        formats.push(...groupedFormats[res]);
-      }
-    });
-
-    return formats;
+  const getOrderedResolutions = () => {
+    const availableResolutions = Object.keys(groupedFormats);
+    return resolutionOrder.filter(res => availableResolutions.includes(res));
   };
 
   const toggleDropdown = (category) => {
     setOpenDropdown(openDropdown === category ? null : category);
   };
 
-  const getFileSizeInMB = (size) => {
-    if (!size) return "Unknown";
-    const match = size.match(/(\d+\.?\d*)\s*(MB|GB|KB)/i);
-    if (match) {
-      const value = parseFloat(match[1]);
-      const unit = match[2].toUpperCase();
-      if (unit === "GB") return `${(value * 1024).toFixed(1)} MB`;
-      if (unit === "KB") return `${(value / 1024).toFixed(1)} MB`;
-      return `${value} MB`;
+  const getFileSizeDisplay = (size) => {
+    if (!size || size === "N/A" || size === "Unknown Size") {
+      return "Size unknown";
     }
     return size;
   };
 
-  const renderVideoContent = () => (
-    <div className="space-y-3">
-      <h4 className="text-sm font-medium text-slate-300 mb-3">
-        Choose Video Quality:
-      </h4>
+  const renderVideoContent = () => {
+    const orderedResolutions = getOrderedResolutions();
+    
+    if (orderedResolutions.length === 0) {
+      return (
+        <div className="text-center py-8 text-slate-400">
+          <AlertCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+          <p>No video formats available</p>
+        </div>
+      );
+    }
 
-      {Object.entries(resolutionCategories).map(([category, resolutions]) => {
-        const categoryFormats = getFormatsForCategory(category);
+    return (
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-slate-300 mb-3">
+          Choose Video Quality:
+        </h4>
 
-        if (categoryFormats.length === 0) return null;
+        {orderedResolutions.map((resolution) => {
+          const formats = groupedFormats[resolution];
+          if (!formats || formats.length === 0) return null;
 
-        return (
-          <div key={category}>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => toggleDropdown(category)}
-              className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                {category === "8K" && (
-                  <Star className="w-5 h-5 text-amber-400" />
-                )}
-                {category === "4K" && (
-                  <Film className="w-5 h-5 text-purple-400" />
-                )}
-                {category === "HD" && (
-                  <Monitor className="w-5 h-5 text-cyan-400" />
-                )}
-                {!["8K", "4K", "HD"].includes(category) && (
-                  <Video className="w-5 h-5 text-slate-400" />
-                )}
+          // Determine icon based on resolution
+          let icon = <Video className="w-5 h-5 text-slate-400" />;
+          if (resolution.includes("2160")) {
+            icon = <Star className="w-5 h-5 text-amber-400" />;
+          } else if (resolution.includes("1440") || resolution.includes("1080")) {
+            icon = <Monitor className="w-5 h-5 text-cyan-400" />;
+          } else if (resolution.includes("720")) {
+            icon = <Film className="w-5 h-5 text-purple-400" />;
+          }
 
-                <span className="text-white font-medium">{category}</span>
-                <span className="text-slate-400 text-sm">
-                  ({categoryFormats.length} option
-                  {categoryFormats.length > 1 ? "s" : ""})
-                </span>
-              </div>
-
-              <motion.div
-                animate={{ rotate: openDropdown === category ? 180 : 0 }}
-                transition={{ duration: 0.2 }}
+          return (
+            <div key={resolution}>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => toggleDropdown(resolution)}
+                disabled={isProcessing}
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors disabled:opacity-50"
               >
-                <ChevronDown className="w-5 h-5 text-slate-400" />
-              </motion.div>
-            </motion.button>
+                <div className="flex items-center gap-3">
+                  {icon}
+                  <span className="text-white font-medium">{resolution}</span>
+                  <span className="text-slate-400 text-sm">
+                    ({formats.length} option{formats.length > 1 ? "s" : ""})
+                  </span>
+                </div>
 
-            <AnimatePresence>
-              {openDropdown === category && (
                 <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="overflow-hidden"
+                  animate={{ rotate: openDropdown === resolution ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
                 >
-                  <div className="mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {categoryFormats.map((format, index) => (
-                        <motion.button
-                          key={`${format.format_id}-${index}`}
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => onFormatDownload(format.format_id)}
-                          className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <Download className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm font-semibold text-white">
-                              {format.ext.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-400">
-                            {format.quality}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            {getFileSizeInMB(format.size)}
-                          </div>
-                        </motion.button>
-                      ))}
-                    </div>
-                  </div>
+                  <ChevronDown className="w-5 h-5 text-slate-400" />
                 </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })}
-    </div>
-  );
+              </motion.button>
 
-  const renderAudioContent = () => (
-    <div className="space-y-3">
-      <h4 className="text-sm font-medium text-slate-300 mb-3">
-        Choose Audio Quality:
-      </h4>
-
-      {Object.entries(audioFormats).map(([bitrate, formats]) => {
-        if (formats.length === 0) return null;
-
-        return (
-          <div key={bitrate}>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => toggleDropdown(bitrate)}
-              className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                {bitrate === "320kbps" && (
-                  <Star className="w-5 h-5 text-amber-400" />
-                )}
-                {bitrate === "256kbps" && (
-                  <Headphones className="w-5 h-5 text-purple-400" />
-                )}
-                {bitrate === "192kbps" && (
-                  <Music className="w-5 h-5 text-cyan-400" />
-                )}
-                {bitrate === "128kbps" && (
-                  <Music className="w-5 h-5 text-slate-400" />
-                )}
-
-                <span className="text-white font-medium">{bitrate}</span>
-                <span className="text-slate-400 text-sm">
-                  ({formats.length} option{formats.length > 1 ? "s" : ""})
-                </span>
-              </div>
-
-              <motion.div
-                animate={{ rotate: openDropdown === bitrate ? 180 : 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <ChevronDown className="w-5 h-5 text-slate-400" />
-              </motion.div>
-            </motion.button>
-
-            <AnimatePresence>
-              {openDropdown === bitrate && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="overflow-hidden"
-                >
-                  <div className="mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {formats.map((format, index) => (
-                        <motion.button
-                          key={`${format.format_id}-${index}`}
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => onFormatDownload(format.format_id)}
-                          className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <Download className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm font-semibold text-white">
-                              {format.ext.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-400">
-                            {format.abr ? `${format.abr}kbps` : bitrate}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            {getFileSizeInMB(format.size)}
-                          </div>
-                        </motion.button>
-                      ))}
+              <AnimatePresence>
+                {openDropdown === resolution && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {formats.map((format, index) => (
+                          <motion.button
+                            key={`${format.format_id}-${index}`}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => onFormatDownload(format)}   // ✅ pass full format object
+                            disabled={isProcessing}
+                            className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200 disabled:opacity-50"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <Download className="w-4 h-4 text-slate-400" />
+                              <span className="text-sm font-semibold text-white">
+                                {format.ext.toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-400 mb-1">
+                              {format.quality}
+                              {format.fps && ` • ${format.fps}fps`}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {getFileSizeDisplay(format.size)}
+                            </div>
+                          </motion.button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
-      {Object.keys(audioFormats).length === 0 && (
+  const renderAudioContent = () => {
+    const audioQualities = Object.keys(audioFormats);
+    
+    if (audioQualities.length === 0) {
+      return (
         <div className="text-center py-8 text-slate-400">
           <Music className="w-12 h-12 mx-auto mb-2 opacity-50" />
-          <p>No audio formats available for this video</p>
+          <p>No audio-only formats available for this video</p>
         </div>
-      )}
-    </div>
-  );
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-slate-300 mb-3">
+          Choose Audio Quality:
+        </h4>
+
+        {audioQualities.map((quality) => {
+          const formats = audioFormats[quality];
+          if (!formats || formats.length === 0) return null;
+
+          // Determine icon based on quality
+          let icon = <Music className="w-5 h-5 text-slate-400" />;
+          if (quality.includes("Very High") || quality.includes("256")) {
+            icon = <Star className="w-5 h-5 text-amber-400" />;
+          } else if (quality.includes("High") || quality.includes("192")) {
+            icon = <Headphones className="w-5 h-5 text-purple-400" />;
+          } else if (quality.includes("Medium") || quality.includes("128")) {
+            icon = <Music className="w-5 h-5 text-cyan-400" />;
+          }
+
+          return (
+            <div key={quality}>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => toggleDropdown(quality)}
+                disabled={isProcessing}
+                className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-700/50 border border-slate-600/30 hover:bg-slate-700/70 transition-colors disabled:opacity-50"
+              >
+                <div className="flex items-center gap-3">
+                  {icon}
+                  <span className="text-white font-medium">{quality}</span>
+                  <span className="text-slate-400 text-sm">
+                    ({formats.length} option{formats.length > 1 ? "s" : ""})
+                  </span>
+                </div>
+
+                <motion.div
+                  animate={{ rotate: openDropdown === quality ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <ChevronDown className="w-5 h-5 text-slate-400" />
+                </motion.div>
+              </motion.button>
+
+              <AnimatePresence>
+                {openDropdown === quality && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-2 p-3 rounded-xl bg-slate-800/95 border border-slate-600/50 backdrop-blur-sm shadow-xl">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {formats.map((format, index) => (
+                          <motion.button
+                            key={`${format.format_id}-${index}`}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => onFormatDownload(format)}
+                            disabled={isProcessing}
+                            className="p-3 rounded-lg bg-slate-700/50 border border-slate-600/30 hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-cyan-600/20 transition-all duration-200 disabled:opacity-50"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <Download className="w-4 h-4 text-slate-400" />
+                              <span className="text-sm font-semibold text-white">
+                                {format.ext.toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-400 mb-1">
+                              Audio Only
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {getFileSizeDisplay(format.size)}
+                            </div>
+                          </motion.button>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div className="p-6 rounded-2xl bg-slate-800/30 border border-slate-600/30">
-      {/* Video Info Row */}
+      {/* Video Info Header */}
       <div className="flex items-start gap-6 mb-6">
         {/* Thumbnail */}
         <div className="relative flex-shrink-0">
-          <img
-            src={videoData.thumbnail}
-            alt="Video thumbnail"
-            className="w-40 h-30 object-contain rounded-sm border border-slate-600/30"
-          />
+          {videoData.thumbnail ? (
+            <img
+              src={videoData.thumbnail}
+              alt="Video thumbnail"
+              className="w-40 h-30 object-cover rounded-lg border border-slate-600/30"
+              onError={(e) => {
+                e.target.style.display = 'none';
+              }}
+            />
+          ) : (
+            <div className="w-40 h-30 bg-slate-700/50 rounded-lg border border-slate-600/30 flex items-center justify-center">
+              <Video className="w-8 h-8 text-slate-400" />
+            </div>
+          )}
         </div>
 
         {/* Video Details */}
@@ -561,40 +713,62 @@ const VideoPreviewCard = ({
           <h3 className="text-xl font-semibold text-white mb-2 line-clamp-2">
             {videoData.title}
           </h3>
+          
+          <div className="flex flex-wrap gap-4 text-sm text-slate-400 mb-2">
+            {videoData.uploader && (
+              <span>By: {videoData.uploader}</span>
+            )}
+            {videoData.duration && (
+              <span>Duration: {Math.floor(videoData.duration / 60)}:{(videoData.duration % 60).toString().padStart(2, '0')}</span>
+            )}
+          </div>
 
+          {/* Progress Bar */}
           {downloadProgress !== null && (
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex-1 bg-slate-700/50 rounded-full h-2">
-                <motion.div
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-slate-300">Downloading...</span>
+                <span className="text-sm text-green-400 font-medium">
+                  {Math.round(downloadProgress)}%
+                </span>
+              </div>
+              <div className="w-full bg-slate-700/50 rounded-full h-2">
+                <div
                   className="bg-gradient-to-r from-purple-500 to-cyan-500 h-2 rounded-full"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${downloadProgress}%` }}
-                  transition={{ duration: 0.3 }}
+                  style={{ width: `${Math.round(downloadProgress)}%`, transition: 'width 0.3s' }}
                 />
               </div>
-              <span className="text-sm text-green-400 font-medium">
-                {downloadProgress}%
-              </span>
             </div>
           )}
+
+          {/* Reset Button */}
+          <div className="mt-4">
+            <Button
+              onClick={onReset}
+              variant="outline"
+              size="sm"
+              className="border-slate-600/50 text-slate-300 hover:text-white"
+            >
+              Try Another Video
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Audio/Video Tabs */}
+      {/* Format Selection Tabs */}
       <Tabs value={mediaType} onValueChange={setMediaType} className="w-full">
         <TabsList className="grid w-full grid-cols-2 mb-6 bg-slate-800/50 border border-slate-600/30">
-          <TabsTrigger value="video">
+          <TabsTrigger value="video" disabled={isProcessing}>
             <Video className="w-5 h-5 mr-2" />
-            Video
+            Video ({Object.keys(groupedFormats).length})
           </TabsTrigger>
-          <TabsTrigger value="audio">
+          <TabsTrigger value="audio" disabled={isProcessing}>
             <Music className="w-5 h-5 mr-2" />
-            Audio
+            Audio ({Object.keys(audioFormats).length})
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="video">{renderVideoContent()}</TabsContent>
-
         <TabsContent value="audio">{renderAudioContent()}</TabsContent>
       </Tabs>
     </div>
