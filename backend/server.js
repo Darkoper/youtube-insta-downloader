@@ -5,7 +5,7 @@ const bodyParser = require("body-parser");
 const downloaderRoutes = require("./routes/downloader");
 
 const app = express();
-const PORT = 5000;
+const PORT = 8000;
 
 app.use(cors());
 app.use(bodyParser.json());
