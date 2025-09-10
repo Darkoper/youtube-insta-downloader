@@ -24,7 +24,7 @@ import {
 } from "../components/ui/tabs";
 import { toast } from "../hooks/useToast";
 
-const BACKEND_URL = import.meta.env.BACKEND_URL ;
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ;
 
 const VideoDownloader = () => {
   const [url, setUrl] = useState("");
