@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 
-const downloaderRoutes = require("./routes/downloader");
+const downloaderRoutes = require("../");
 
 const app = express();
 const PORT = 8000;
