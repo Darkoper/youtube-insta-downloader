@@ -2,10 +2,15 @@ const express = require("express");
 const { spawn, exec } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 
 const router = express.Router();
 
 let currentProgress = {}; // 🔁 Store progress keyed by video URL
+
+// Determine the correct yt-dlp binary based on OS
+const ytBinary = os.platform() === "win32" ? "yt-dlp.exe" : "yt-dlp";
+const ytDlpPath = path.join(__dirname, "..", "yt-tool", ytBinary);
 
 // 🚀 Download Route
 router.post("/download", (req, res) => {
@@ -15,7 +20,6 @@ router.post("/download", (req, res) => {
     return res.status(400).json({ error: "URL and format_id are required" });
   }
 
-  const ytDlpPath = path.join(__dirname, "..", "yt-tool", "yt-dlp.exe");
   const outputPath = path.join(__dirname, "..", "downloads", `video.${ext || "mp4"}`);
 
   // yt-dlp command
@@ -48,7 +52,6 @@ router.post("/formats", (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL is required" });
 
-  const ytDlpPath = path.join(__dirname, "..", "yt-tool", "yt-dlp.exe");
   const cmd = `"${ytDlpPath}" -J --no-warnings "${url}"`;
 
   exec(cmd, (err, stdout, stderr) => {
