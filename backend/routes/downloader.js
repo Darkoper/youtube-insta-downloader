@@ -24,10 +24,8 @@ router.post("/download", (req, res) => {
 
   const outputPath = path.join(__dirname, "..", "downloads", `video.${ext || "mp4"}`);
 
-  // yt-dlp command
-  // force merging with best audio if video-only format selected
-  const cmd = `"${ytDlpPath}" -f "${format_id}+bestaudio" --merge-output-format mp4 -o "${outputPath}" "${url}"`;
-
+  // yt-dlp command with cookies
+  const cmd = `"${ytDlpPath}" ${cookiesArg.join(" ")} -f "${format_id}+bestaudio" --merge-output-format mp4 -o "${outputPath}" "${url}"`;
 
   exec(cmd, (err, stdout, stderr) => {
     if (err) {
@@ -35,13 +33,11 @@ router.post("/download", (req, res) => {
       return res.status(500).json({ error: "Download failed" });
     }
 
-    // Stream the file as download
     res.download(outputPath, `video.${ext || "mp4"}`, (downloadErr) => {
       if (downloadErr) {
         console.error("Download response error:", downloadErr);
       }
 
-      // Clean up file after sending
       fs.unlink(outputPath, (unlinkErr) => {
         if (unlinkErr) console.error("Failed to delete file:", unlinkErr);
       });
@@ -54,7 +50,7 @@ router.post("/formats", (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL is required" });
 
-  const cmd = `"${ytDlpPath}" -J --no-warnings "${url}"`;
+  const cmd = `"${ytDlpPath}" ${cookiesArg.join(" ")} -J --no-warnings "${url}"`;
 
   exec(cmd, (err, stdout, stderr) => {
     if (err) {
@@ -64,22 +60,21 @@ router.post("/formats", (req, res) => {
 
     try {
       const info = JSON.parse(stdout);
-
-      // ✅ Filter out only usable formats (video/audio with URLs)
       const formats = (info.formats || [])
-      .filter(f =>
-        f.url &&
-        (f.vcodec !== "none" || f.acodec !== "none") &&
-        f.protocol !== "mhtml"
-      ).map(f => ({
-        format_id: f.format_id,
-        ext: f.ext,
-        quality: f.format_note || f.resolution || `${f.width || "?"}x${f.height || "?"}`,
-        hasVideo: f.vcodec !== "none",
-        hasAudio: f.acodec !== "none",
-        size: f.filesize ? `${(f.filesize / (1024 * 1024)).toFixed(1)} MB` : "Unknown Size",
-        fps: f.fps || null
-      }));
+        .filter(f =>
+          f.url &&
+          (f.vcodec !== "none" || f.acodec !== "none") &&
+          f.protocol !== "mhtml"
+        )
+        .map(f => ({
+          format_id: f.format_id,
+          ext: f.ext,
+          quality: f.format_note || f.resolution || `${f.width || "?"}x${f.height || "?"}`,
+          hasVideo: f.vcodec !== "none",
+          hasAudio: f.acodec !== "none",
+          size: f.filesize ? `${(f.filesize / (1024 * 1024)).toFixed(1)} MB` : "Unknown Size",
+          fps: f.fps || null
+        }));
 
       res.json({ title: info.title, formats });
     } catch (parseErr) {
@@ -88,13 +83,6 @@ router.post("/formats", (req, res) => {
     }
   });
 });
-
-
-
-
-
-
-
 
 // Serve downloaded files
 router.get("/file/:filename", (req, res) => {
