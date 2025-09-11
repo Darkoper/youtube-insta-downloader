@@ -11,6 +11,8 @@ let currentProgress = {}; // 🔁 Store progress keyed by video URL
 // Determine the correct yt-dlp binary based on OS
 const ytBinary = os.platform() === "win32" ? "yt-dlp.exe" : "yt-dlp";
 const ytDlpPath = path.join(__dirname, "..", "yt-tool", ytBinary);
+const cookiesPath = path.join(__dirname, "..", "yt-tool", "cookies.txt");
+const cookiesArg = fs.existsSync(cookiesPath) ? ["--cookies", cookiesPath] : [];
 
 // 🚀 Download Route
 router.post("/download", (req, res) => {
